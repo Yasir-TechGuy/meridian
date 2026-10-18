@@ -68,6 +68,37 @@ export interface Strategy<TConfig = unknown> {
   close(context: StrategyContext): readonly Order[];
 }
 
+/**
+ * Interface that strategies can optionally implement to expose their
+ * internal equity (their own accounting of all positions they hold,
+ * including any that live outside the runner's `Portfolio`).
+ *
+ * Strategies that do NOT implement this fall back to the runner's
+ * portfolio value, which is correct for strategies that only trade
+ * through the runner's `Portfolio` (e.g. simple spot strategies).
+ *
+ * Delta-neutral is the canonical implementer today: it uses a modeled
+ * hedge venue whose short position lives outside the portfolio, so its
+ * `equity` includes PnL the portfolio cannot see (see #1047).
+ */
+export interface EquityReportingStrategy {
+  readonly equity: FixedPointDecimal;
+}
+
+/**
+ * Reads the strategy's self-reported equity if it exposes one, otherwise
+ * returns `null` so the caller can fall back to `portfolio.totalValue()`.
+ */
+export function reportedEquity(
+  strategy: Strategy<unknown>
+): FixedPointDecimal | null {
+  if (strategy && typeof strategy === "object" && "equity" in strategy) {
+    const equity = (strategy as EquityReportingStrategy).equity;
+    if (equity && typeof equity.toStroops === "function") return equity;
+  }
+  return null;
+}
+
 export class LifecycleOrderError extends Error {
   constructor(message: string) {
     super(message);

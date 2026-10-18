@@ -7,7 +7,7 @@ import { Portfolio } from "../portfolio";
 import type { Position, PriceSet } from "../portfolio";
 import { ZERO_SLIPPAGE_MODEL, applyOrderFill } from "../slippage-model";
 import type { SlippageModel } from "../slippage-model";
-import { StrategyLifecycle } from "../strategy";
+import { StrategyLifecycle, reportedEquity } from "../strategy";
 import type { Order, Strategy, StrategyContext } from "../strategy";
 import { FixedPointDecimal, STROOPS_PER_UNIT } from "../types";
 import type {
@@ -75,6 +75,19 @@ export interface BacktestResult {
   readonly snapshots: readonly BacktestSnapshot[];
   /** Value after the closing orders have been filled, so positions are shut. */
   readonly finalValue: FixedPointDecimal;
+  /**
+   * The strategy's own book equity at close — the sum of every position it
+   * tracks, including any modeled outside the runner's `Portfolio`.
+   *
+   * Equals `finalValue` for strategies that only trade through the runner's
+   * `Portfolio`. Diverges for strategies that use modeled venues (e.g.
+   * delta-neutral's `ModeledHedgeVenue`, whose short position lives outside
+   * the portfolio — see #1047).
+   *
+   * Prefer this field when measuring a strategy's actual PnL. `finalValue`
+   * reflects only the positions the runner's portfolio tracks.
+   */
+  readonly strategyEquity: FixedPointDecimal;
   readonly totalInterest: FixedPointDecimal;
   readonly totalFunding: FixedPointDecimal;
   readonly totalFees: FixedPointDecimal;
@@ -183,11 +196,19 @@ export function runBacktest<TConfig = unknown>(
     fill(portfolio, order, closing.market.prices, execution);
   }
 
+  // Strategies that self-report equity (e.g. delta-neutral with a modeled
+  // hedge venue) surface their own book value; the rest fall back to the
+  // portfolio's value, which is correct for pure-portfolio strategies.
+  const portfolioValue = portfolio.totalValue(closing.market.prices);
+  const selfEquity = reportedEquity(config.strategy);
+  const strategyEquity = selfEquity ?? portfolioValue;
+
   return {
     strategyName: config.strategy.name,
     initialCash: config.initialCash,
     snapshots,
-    finalValue: portfolio.totalValue(closing.market.prices),
+    finalValue: portfolioValue,
+    strategyEquity,
     totalInterest,
     totalFunding,
     totalFees: portfolio.fees,
